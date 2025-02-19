@@ -15,7 +15,7 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // Temperature sensor setup
 OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature sensors(&oneWire);
+DallasTemperature tempSensor(&oneWire);
 
 // Variables
 float temperatureC;
@@ -32,7 +32,7 @@ void setup() {
   lcd.backlight();
 
   // Initialize temperature sensor
-  sensors.begin();
+  temptempSensor.begin();
 
   // Pin modes
   pinMode(RELAY_PUMP, OUTPUT);
@@ -81,20 +81,30 @@ void loop() {
       Serial.println("Heating...");
       digitalWrite(RELAY_HEATER, LOW);
       while (true) {
-        sensors.requestTemperatures();
-        temperatureC = sensors.getTempCByIndex(0);
+        tempSensor.requestTemperatures();
+        temperatureC = tempSensor.getTempCByIndex(0);
         lcd.setCursor(0, 1);
         lcd.print("Temp: ");
         lcd.print(temperatureC);
         lcd.print((char)223);
         lcd.print("C ");
         Serial.print("Temperature: ");
+
+
+        //pass the temp sensor value to wifi
         Serial.print(temperatureC);
         Serial.println(" C");
+         // Send formatted data as "FLOW:XX.XX|TEMP:YY.YY"
+        ESP8266.print(flowRate); //flow sensor 
+        ESP8266.print(",");
+        ESP8266.println(temperature);
+      
 
-        if (temperatureC >= 35.0) {
+        if (temperatureC >= 60.0) {
           break;
         }
+
+        
         delay(1000);
       }
       digitalWrite(RELAY_HEATER, HIGH);
@@ -125,7 +135,7 @@ void loop() {
   }
 }
 
-void 
+
 
 void countdown(int minutes) {
   for (int i = minutes; i > 0; i--) {
