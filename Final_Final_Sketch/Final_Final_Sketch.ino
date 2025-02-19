@@ -20,6 +20,8 @@ DallasTemperature tempSensor(&oneWire);
 // Variables
 float temperatureC;
 bool processRunning = false;
+
+//wifi 
 #define ESP8266 Serial1
 
 void setup() {
@@ -94,10 +96,7 @@ void loop() {
         //pass the temp sensor value to wifi
         Serial.print(temperatureC);
         Serial.println(" C");
-         // Send formatted data as "FLOW:XX.XX|TEMP:YY.YY"
-        ESP8266.print(flowRate); //flow sensor 
-        ESP8266.print(",");
-        ESP8266.println(temperature);
+ 
       
 
         if (temperatureC >= 60.0) {

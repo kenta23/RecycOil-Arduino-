@@ -15,6 +15,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
     message += (char)payload[i];
   }
 
+   if (message == "on") {
+        Serial.println("ON");
+    } else if (message == "off") {
+        Serial.println("OFF");
+    }
+
   Serial.println("Received: " + message);
   Serial.println(message);
   
@@ -63,6 +69,8 @@ void loop() {
       // Publish to MQTT
       client.publish("recycoil/flow", flowRate.c_str());
       client.publish("recycoil/temp", temperature.c_str());
+
+
     }
 
   }
