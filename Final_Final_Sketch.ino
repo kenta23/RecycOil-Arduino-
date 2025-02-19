@@ -20,10 +20,12 @@ DallasTemperature sensors(&oneWire);
 // Variables
 float temperatureC;
 bool processRunning = false;
+#define ESP8266 Serial1
 
 void setup() {
   // Initialize serial communication
   Serial.begin(9600);
+  ESP8266.begin(9600); //CHANGE THIS TO 115200 IF THIS DOESNT WORK 
 
   // Initialize LCD
   lcd.init();
@@ -122,6 +124,8 @@ void loop() {
     }
   }
 }
+
+void 
 
 void countdown(int minutes) {
   for (int i = minutes; i > 0; i--) {
