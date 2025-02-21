@@ -9,15 +9,17 @@ const int mqttPort = 1883;
 WiFiClient espClient;
 PubSubClient client(espClient);
 
+// Callback function to handle received MQTT messages
 void callback(char* topic, byte* payload, unsigned int length) {
   String message = "";
+  
   for (int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
 
-   if (message == "on") {
-        Serial.println("ON");
-    } else if (message == "off") {
+   if (message == "ON") {
+        Serial.println("ON"); //turn on all of the components to arduino mega
+    } else if (message == "OFF") {
         Serial.println("OFF");
     }
 
@@ -43,11 +45,12 @@ void setup() {
 
   while (!client.connected()) {
     Serial.print("Connecting to MQTT...");
+
     if (client.connect("ESP8266Client")) {
       Serial.println("Connected!");
-      client.subscribe("iot/led");
+      client.publish("iot/machine", "OFF");
     } else {
-      delay(5000);
+      delay(2000);
     }
   }
 }

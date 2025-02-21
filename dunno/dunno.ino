@@ -69,8 +69,14 @@ void setup() {
 void loop() {
    machineState();
 
-   if (machineOn) {
-     checkButtonPress();
+   if (machineOn || checkButtonPress()) {
+        totalVolume = 0.0;
+        totalPulses = 0.0;
+        pulseCount = 0;
+        pumpRunning = true;
+        heatingStarted = false;
+
+     Serial.println("Button Pressed: Starting Pump");
      readTemperature();
      controlHeater();
      controlMotor();
@@ -82,8 +88,11 @@ void machineState() {
   if(ESP8266.available()) {
         String command = Serial1.readStringUntil('\n');
         command.trim();
+        //receiving data from esp8266 
+
 
         Serial.println(command);
+        
 
         if (command == "ON") {
             machineOn = true;
@@ -96,24 +105,34 @@ void machineState() {
 }
 
 
-void checkButtonPress() {
+bool checkButtonPress() {
+    // if (digitalRead(BUTTON_PIN) == LOW && !buttonPressed) {
+    //     delay(200); // Debounce
+    //     buttonPressed = true;
+    //     totalVolume = 0.0;
+    //     totalPulses = 0.0;
+    //     pulseCount = 0;
+    //     pumpRunning = true;
+    //     heatingStarted = false;
+
+    //     Serial.println("Button Pressed: Starting Pump");
+    //     lcd.clear();
+    //     lcd.setCursor(0, 0);
+    //     lcd.print("Pump ON");
+    //     digitalWrite(PUMP_PIN, LOW);
+    // }
+
     if (digitalRead(BUTTON_PIN) == LOW && !buttonPressed) {
-        delay(200); // Debounce
+        delay(200);
         buttonPressed = true;
-        totalVolume = 0.0;
-        totalPulses = 0.0;
-        pulseCount = 0;
-        pumpRunning = true;
-        heatingStarted = false;
-        Serial.println("Button Pressed: Starting Pump");
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Pump ON");
-        digitalWrite(PUMP_PIN, LOW);
+        return true;
     }
+
     if (digitalRead(BUTTON_PIN) == HIGH) {
         buttonPressed = false;
+        return false;
     }
+
 }
 
 void readTemperature() {
