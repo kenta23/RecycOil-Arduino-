@@ -11,7 +11,8 @@
 #define SV 28
 #define BUTTON_ONE 12
 #define BUTTON_TWO 7
-#define FLOW_SENSOR_PIN 14  
+#define BUTTON_THREE 8 // New button for additional control
+#define FLOW_SENSOR_PIN 2  // Flow sensor signal pin
 
 // LCD Setup (Assuming I2C LCD at 0x27)
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -26,9 +27,16 @@ float totalLiters = 0.0;
 bool pumpOneState = false;
 bool pumpTwoState = false;
 bool heaterState = false;
-bool mixingCompleted = false;  // NEW FLAG: Wait for user input after mixing
+bool mixingCompleted = false;
+unsigned long heaterStartTime = 0;
+bool heaterStarted = false;
 
-// Interrupt for Flow Sensor
+// MPC Variables for Heater
+float targetTemp = 35.0;
+float currentTemp = 0.0;
+unsigned long lastHeaterUpdate = 0;
+const unsigned long heaterInterval = 5000; // 5 sec update interval
+
 void pulseCounter() {
     pulseCount++;
 }
@@ -43,6 +51,8 @@ void setup() {
     pinMode(SV, OUTPUT);
     pinMode(BUTTON_ONE, INPUT_PULLUP);
     pinMode(BUTTON_TWO, INPUT_PULLUP);
+    pinMode(BUTTON_THREE, INPUT_PULLUP);
+    pinMode(FLOW_SENSOR_PIN, INPUT_PULLUP);
     
     digitalWrite(PUMP_ONE, HIGH);
     digitalWrite(PUMP_TWO, HIGH);
@@ -56,124 +66,109 @@ void setup() {
     
     attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), pulseCounter, RISING);
     
-    Serial.println("System Ready");
-    lcd.print("System Ready");
+    Serial.println("Machine Ready");
+    lcd.print("Machine Ready");
 }
 
 void loop() {
-    // Button 1 Press - Toggle Pump One
     if (digitalRead(BUTTON_ONE) == LOW) {
-        delay(200); // Debounce
-        pumpOneState = !pumpOneState; // Toggle state
+        pumpOneState = !pumpOneState;
+        pulseCount = 0;
         
         if (pumpOneState) {
-            digitalWrite(PUMP_ONE, LOW);  // Turn ON Pump One
-            Serial.println("Pump One ON - Oil is being pumped...");
+            digitalWrite(PUMP_ONE, LOW);
+            Serial.println("Pumping Oil - Measuring Volume");
         } else {
-            digitalWrite(PUMP_ONE, HIGH); // Turn OFF Pump One
-            Serial.println("Pump One OFF - Starting heater...");
-            heaterState = true; // Start heater after Pump One stops
+            digitalWrite(PUMP_ONE, HIGH);
+            Serial.println("Pump One OFF - Waiting 10s before heating");
+            delay(10000);
+            heaterState = true;
+            heaterStartTime = millis();
+            heaterStarted = true;
         }
-        
-        delay(300); // Prevent accidental double press
+        delay(300);
     }
-
-    // **Wait for Mixing Completion Before Allowing Pump Two**
-    if (mixingCompleted) {
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Mixing Done!");
-        lcd.setCursor(0, 1);
-        lcd.print("Press Button 2");
-
-        Serial.println("Mixing Done! Waiting for BUTTON_TWO to start Pump Two.");
-
-        // Only allow Pump Two after mixing is completed
-        if (digitalRead(BUTTON_TWO) == LOW) {
-            delay(200); // Debounce
-            pumpTwoState = !pumpTwoState;
-
-            if (pumpTwoState) {
-                digitalWrite(PUMP_TWO, LOW);  // Turn ON Pump Two
-                digitalWrite(SV, LOW);        // Open Solenoid
-                Serial.println("Pump Two ON - Transferring biodiesel...");
-            } else {
-                digitalWrite(PUMP_TWO, HIGH); // Turn OFF Pump Two
-                digitalWrite(SV, HIGH);       // Close Solenoid
-                Serial.println("Pump Two OFF - Transfer stopped.");
-            }
-            
-            delay(300); // Prevent accidental double press
-        }
-        return; // Stop execution here so LCD does not reset
-    }
-
-    // Update LCD and Serial Monitor
-    lcd.clear();
 
     if (pumpOneState) {
-        totalLiters = (pulseCount * 2.5 * 2.3) / 1000.0;
-        
+        totalLiters = ((pulseCount * 2.0) * 1.8) / 1000.0; // Adjusted calibration
+        lcd.clear();
         lcd.setCursor(0, 0);
-        lcd.print("Pumping Oil...");
-        lcd.setCursor(0, 1);
         lcd.print("Flow: ");
         lcd.print(totalLiters, 2);
         lcd.print(" L");
-
-        Serial.print("Flow Rate: ");
+        Serial.print("Total Volume Transferred: ");
         Serial.print(totalLiters, 2);
-        Serial.println(" L pumped");
-    } 
-    else if (heaterState) {
-        sensors.requestTemperatures();
-        float temperature = sensors.getTempCByIndex(0);
-        
-        lcd.setCursor(0, 0);
-        lcd.print("Heating Oil...");
-        lcd.setCursor(0, 1);
-        lcd.print("Temp: ");
-        lcd.print(temperature);
-        lcd.print("C");
-
-        Serial.print("Heating... Current Temp: ");
-        Serial.print(temperature);
-        Serial.println("°C");
-
-        // Stop heater at 30°C
-        if (temperature >= 30.0) {
-            digitalWrite(HEATER, HIGH);
-            heaterState = false;
-            Serial.println("Heater OFF - Reached 30°C");
-
-            delay(5000); // Wait 5 seconds before mixing
-
-            digitalWrite(MOTOR, LOW); 
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            lcd.print("Mixing Oil...");
-            lcd.setCursor(0, 1);
-            lcd.print("Please Wait");
-            Serial.println("Mixing Oil - Motor ON for 30 sec");
-
-            delay(30000); // Mix for 30 seconds
-            
-            digitalWrite(MOTOR, HIGH);
-            Serial.println("Mixing Complete - Motor OFF");
-            
-            mixingCompleted = true;  // Enable Pump Two activation
-        } else {
-            digitalWrite(HEATER, LOW); 
-        }
-    } 
-    else {
-        lcd.setCursor(0, 0);
-        lcd.print("System Ready...");
-        lcd.setCursor(0, 1);
-        lcd.print("Press a Button");
-
-        Serial.println("System Ready - Waiting for input...");
+        Serial.println(" L");
     }
 
-    delay(500);
+    if (heaterState) {
+        unsigned long currentMillis = millis();
+        if (currentMillis - lastHeaterUpdate >= heaterInterval) {
+            lastHeaterUpdate = currentMillis;
+            sensors.requestTemperatures();
+            currentTemp = sensors.getTempCByIndex(0);
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Heating Oil...");
+            lcd.setCursor(0, 1);
+            lcd.print("Temp: ");
+            lcd.print(currentTemp);
+            lcd.print("C");
+
+            Serial.print("Current Temp: ");
+            Serial.print(currentTemp);
+            Serial.println(" C");
+
+            float controlSignal = targetTemp - currentTemp;
+            if (controlSignal > 1.0) {
+                digitalWrite(HEATER, LOW);
+            } else {
+                digitalWrite(HEATER, HIGH);
+                heaterState = false;
+                Serial.println("Heater OFF - Reached Target Temp");
+                unsigned long heatingDuration = (millis() - heaterStartTime) / 60000;
+                Serial.print("Heating Duration: ");
+                Serial.print(heatingDuration);
+                Serial.println(" min");
+                delay(20000);
+                Serial.println("Starting Mixing Process");
+                digitalWrite(MOTOR, LOW);
+                for (int i = 20; i > 0; i--) {
+                    lcd.clear();
+                    lcd.setCursor(0, 0);
+                    lcd.print("Mixing Oil...");
+                    lcd.setCursor(0, 1);
+                    lcd.print("Time Left: ");
+                    lcd.print(i);
+                    lcd.print(" sec");
+                    Serial.print("Mixing Time Left: ");
+                    Serial.println(i);
+                    delay(1000);
+                }
+                digitalWrite(MOTOR, HIGH);
+                Serial.println("Mixing Complete - Motor OFF");
+                lcd.clear();
+                lcd.setCursor(0, 0);
+                lcd.print("Process Complete");
+                mixingCompleted = true;
+            }
+        }
+    }
+
+    if (digitalRead(BUTTON_TWO) == LOW) {
+        pumpTwoState = !pumpTwoState;
+        if (pumpTwoState) {
+            digitalWrite(PUMP_TWO, LOW);
+            digitalWrite(SV, LOW);
+            Serial.println("Pump Two ON - Transferring biodiesel");
+            pulseCount = 0;
+        } else {
+            digitalWrite(PUMP_TWO, HIGH);
+            digitalWrite(SV, HIGH);
+            Serial.println("Pump Two OFF - Transfer stopped");
+            Serial.println("Process Complete");
+        }
+        delay(300);
+    }
+    delay(1000);
 }
