@@ -30,6 +30,9 @@ bool heaterState = false;
 bool mixingCompleted = false;
 unsigned long heaterStartTime = 0;
 bool heaterStarted = false;
+unsigned long pumpStartTime = 0;
+bool flowMeasurementStarted = false;
+const unsigned long flowSensorDelay = 3000; // Delay before measuring flow (3 seconds)
 
 // MPC Variables for Heater
 float targetTemp = 35.0;
@@ -38,7 +41,9 @@ unsigned long lastHeaterUpdate = 0;
 const unsigned long heaterInterval = 5000; // 5 sec update interval
 
 void pulseCounter() {
-    pulseCount++;
+    if (flowMeasurementStarted) {
+        pulseCount++;
+    }
 }
 
 void setup() {
@@ -74,10 +79,12 @@ void loop() {
     if (digitalRead(BUTTON_ONE) == LOW) {
         pumpOneState = !pumpOneState;
         pulseCount = 0;
+        flowMeasurementStarted = false;
         
         if (pumpOneState) {
             digitalWrite(PUMP_ONE, LOW);
-            Serial.println("Pumping Oil - Measuring Volume");
+            Serial.println("Pumping Oil - Waiting for Flow Stabilization");
+            pumpStartTime = millis(); // Start time when pump turns on
         } else {
             digitalWrite(PUMP_ONE, HIGH);
             Serial.println("Pump One OFF - Waiting 10s before heating");
@@ -89,7 +96,13 @@ void loop() {
         delay(300);
     }
 
-    if (pumpOneState) {
+    // Start flow measurement after initial delay
+    if (pumpOneState && !flowMeasurementStarted && (millis() - pumpStartTime >= flowSensorDelay)) {
+        flowMeasurementStarted = true;
+        Serial.println("Flow Sensor Activated - Measuring Volume");
+    }
+
+    if (flowMeasurementStarted) {
         totalLiters = ((pulseCount * 2.0) * 1.8) / 1000.0; // Adjusted calibration
         lcd.clear();
         lcd.setCursor(0, 0);
