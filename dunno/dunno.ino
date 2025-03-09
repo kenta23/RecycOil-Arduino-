@@ -31,7 +31,7 @@ bool buttonPressed = false;
 bool heatingStarted = false;
 
 //machine state 
-bool machineOn = false;
+bool machineOn = true;
 
 
 void pulseCounter() {
@@ -67,9 +67,9 @@ void setup() {
 }
 
 void loop() {
-   machineState();
+  //  machineState();
 
-   if (machineOn || checkButtonPress()) {
+   if (machineOn) {
         totalVolume = 0.0;
         totalPulses = 0.0;
         pulseCount = 0;
@@ -77,6 +77,10 @@ void loop() {
         heatingStarted = false;
 
      Serial.println("Button Pressed: Starting Pump");
+     lcd.clear();
+     lcd.setCursor(0, 0);
+     lcd.print("Pump ON");
+     digitalWrite(PUMP_PIN, LOW);
      readTemperature();
      controlHeater();
      controlMotor();

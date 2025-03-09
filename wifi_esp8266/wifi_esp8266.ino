@@ -37,6 +37,7 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    
   }
   Serial.println("\nWiFi connected!");
 
@@ -72,7 +73,10 @@ void loop() {
       // Publish to MQTT
       client.publish("recycoil/flow", flowRate.c_str());
       client.publish("recycoil/temp", temperature.c_str());
+      
+      //oil volume 
 
+    client.publish("recycoil/oil-volume", '');
 
     }
 
