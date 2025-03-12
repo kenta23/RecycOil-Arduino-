@@ -11,8 +11,8 @@
 
 #define MQTT_BROKER "test.mosquitto.org"
 #define MQTT_PORT 1883
-#define MQTT_USERNAME "Your_MQTT_Username"
-#define MQTT_PASSWORD "Your_MQTT_Password"
+#define MQTT_USERNAME "bscs4a"
+#define MQTT_PASSWORD "123"
 
 #define TOPIC_START "recycoil/buttonStart"
 #define TOPIC_STOP  "recycoil/buttonStop"
@@ -33,11 +33,11 @@
 #define SV_BIODIESEL 26
 
 // Buttons
-#define BUTTON_ONE 14 
+#define BUTTON_ONE 4 //changed from 14
 #define BUTTON_TWO 27 
 
 // Flow Sensor
-#define FLOW_SENSOR_PIN 13  
+#define FLOW_SENSOR_PIN 34  //changed from 13
 
 // DS18B20 OneWire
 #define ONE_WIRE_BUS 32  
@@ -82,6 +82,11 @@ bool solenoidActive = false;
 float targetTemp = 28.0;
 float currentTemp = 0.0;
 
+
+bool runMotor = false;
+bool lastStep = false;
+bool finished = false;
+
 // WiFi Connection
 void connectWiFi() {
     Serial.print("Connecting to WiFi...");
@@ -116,7 +121,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void connectMQTT() {
     while (!client.connected()) {
         Serial.print("Connecting to MQTT...");
-        if (client.connect("ESP32_Client")) {
+        if (client.connect("ESP32_Client", MQTT_USERNAME, MQTT_PASSWORD)) {
             Serial.println("Connected!");
             client.subscribe(TOPIC_START);
             client.subscribe(TOPIC_STOP);
@@ -208,73 +213,105 @@ void updateSensors() {
 void runMachine() {
     unsigned long startTime = millis();  // Record start time
 
-    if (!heaterRunning && !solenoidActive) {
+
+   //step 1 
+    if (digitalRead(PUMP_ONE) == HIGH) {
         digitalWrite(PUMP_ONE, LOW);
         lcd.setCursor(0, 1);
         lcd.print("Transferring Oil");
         delay(6000);
     }
 
+  //step 2
     if (flowRate < 2.00 && !heaterRunning && !heaterStoppedByTemp) {
-        digitalWrite(PUMP_ONE, HIGH);
-        digitalWrite(HEATER, LOW);
         heaterRunning = true;
+        
+        if(heaterRunning) { 
+           digitalWrite(PUMP_ONE, HIGH); //off the pump one
+           digitalWrite(HEATER, LOW);  //turn on the heater
+
+        }
         lcd.setCursor(0, 1);
         lcd.print("Heating oil");
     }
 
+   //step 3
     if (heaterRunning && currentTemp >= targetTemp) {
+        lcd.setCursor(0, 1);
+        lcd.print("Heater Stopped");
         digitalWrite(HEATER, HIGH);
         heaterRunning = false;
         heaterStoppedByTemp = true;
-        lcd.setCursor(0, 1);
-        lcd.print("Heater Stopped");
-        delay(30000);
+        delay(30000); //after 30 seconds
         solenoidActive = true;
     }
 
-    if (solenoidActive) {
-        digitalWrite(SV_METHANOL, LOW);
-        digitalWrite(PUMP_THREE, LOW);
-        delay(30000);
-        digitalWrite(SV_METHANOL, HIGH);
-        digitalWrite(PUMP_THREE, HIGH);
+   //step 4
+    if (solenoidActive && heaterStoppedByTemp) {
         lcd.setCursor(0, 1);
         lcd.print("Pouring methanol");
+        digitalWrite(SV_METHANOL, LOW); //turn on
+        digitalWrite(PUMP_THREE, LOW); //turn on
+
+        delay(30000); //after 300000 ms
+        digitalWrite(SV_METHANOL, HIGH);
+        digitalWrite(PUMP_THREE, HIGH);
         solenoidActive = false;
-        delay(10000);
+        delay(10000); //delay 10 seconds for the next step
+        runMotor = true;
     }
 
-     digitalWrite(DCMOTOR, LOW);
-     lcd.print("Mixing oil");
-     delay(20000);
-     digitalWrite(DCMOTOR, HIGH);
-    lcd.setCursor(0, 1);
-    lcd.print("Mixing Done");
+    if(!solenoidActive && runMotor) { 
+       digitalWrite(DCMOTOR, LOW);
+       lcd.setCursor(0, 1)
+       lcd.print("Mixing oil");
+       delay(20000);
+       digitalWrite(DCMOTOR, HIGH);
+       lcd.setCursor(0, 1);
+       lcd.print("Mixing Done");
+       runMotor = false;
+       delay(3000);
+       lastStep = true;
+    }
+  
+     
+    if(!runMotor && lastStep) { 
+        digitalWrite(SV_BIODIESEL, LOW);
+        digitalWrite(PUMP_TWO, LOW);
+        delay(15000);
+        digitalWrite(SV_BIODIESEL, HIGH);
+        digitalWrite(PUMP_TWO, HIGH);
+        machineRunning = false;
+        finished = true;
+    }
 
-    digitalWrite(SV_BIODIESEL, LOW);
-    digitalWrite(PUMP_TWO, LOW);
-    delay(15000);
-    digitalWrite(SV_BIODIESEL, HIGH);
-    digitalWrite(PUMP_TWO, HIGH);
-    machineRunning = false;
+   if(!machineRunning && finished) { 
+      //stop all the components
+      digitalWrite(PUMP_ONE, HIGH);
+      digitalWrite(PUMP_TWO, HIGH);
+      digitalWrite(PUMP_THREE, HIGH);
+      digitalWrite(HEATER, HIGH);
+      digitalWrite(DCMOTOR, HIGH);
+      digitalWrite(SV_METHANOL, HIGH);
+      digitalWrite(SV_BIODIESEL, HIGH);
 
-    unsigned long endTime = millis();
-    unsigned long producingTime = (endTime - startTime) / 1000;  // Convert to seconds
+      unsigned long endTime = millis();
+      unsigned long producingTime = (endTime - startTime) / 1000;  // Convert to seconds
 
-    // Convert to hours, minutes, seconds
-    int hours = producingTime / 3600;
-    int minutes = (producingTime % 3600) / 60;
-    int seconds = producingTime % 60;
 
-    char formattedTime[20];
-    snprintf(formattedTime, sizeof(formattedTime), "%02d:%02d:%02d", hours, minutes, seconds);
+     client.publish("recycoil/producingTime", producingTime);
+     client.publish("recycoil/status", "SUCCESSFUL");
 
-    client.publish("recycoil/producingTime", formattedTime);
-    client.publish("recycoil/status", "SUCCESSFUL");
-    Serial.println("STATUS successful");
-    Serial.print("Producing Time: ");
-    Serial.println(formattedTime);
+     //calculate the saved Co2 
+     float carbonfootprint = flowRate * 2.7 * 0.8; //CO₂ Saved = Liters of Biodiesel Produced × CO₂ Emission Factor of Diesel × Emission Reduction Factor
+
+     client.publish(TOPIC_CARBONFOOTPRINT, carbonfootprint); //total carbon footprint
+     Serial.println("STATUS successful");
+
+     Serial.print("Producing Time:");
+     Serial.println(producingTime);
+
+   }
 }
 
 
