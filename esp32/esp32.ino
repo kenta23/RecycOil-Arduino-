@@ -9,19 +9,20 @@
 #define WIFI_SSID "PLDTHOMEFIBR7Fx93"
 #define WIFI_PASSWORD "@ApolinarioFamily29"
 
-#define MQTT_BROKER "test.mosquitto.org"
+#define MQTT_BROKER "broker.emqx.io"
 #define MQTT_PORT 1883
 #define MQTT_USERNAME "bscs4a"
 #define MQTT_PASSWORD "123"
 
+
 #define TOPIC_START "recycoil/buttonStart"
-#define TOPIC_STOP  "recycoil/buttonStop"
 #define TOPIC_TEMP "recycoil/temperature"
 #define TOPIC_FLOW "recycoil/flowRate"
 #define TOPIC_LITERS "recycoil/liters"
 #define TOPIC_STATUS "recycoil/status"
 #define TOPIC_BIODIESEL "recycoil/biodiesel"
 #define TOPIC_CARBONFOOTPRINT "recycoil/carbonFootprint"
+#define TOPIC_ENERGYCONSUMPTION "recycoil/energyConsumption"
 
 
 #define PUMP_ONE 23    
@@ -32,8 +33,9 @@
 #define SV_METHANOL 16 
 #define SV_BIODIESEL 26
 
+
 // Buttons
-#define BUTTON_ONE 4 //changed from 14
+#define BUTTON_ONE 14 //changed from 14
 #define BUTTON_TWO 27 
 
 // Flow Sensor
@@ -109,12 +111,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print("Message: ");
     Serial.println(message);
 
-    if (String(topic) == TOPIC_START && message == "1") {
+    if (String(topic) == TOPIC_START && message == "true") {
         machineRunning = true;
-    } 
-    if (String(topic) == TOPIC_STOP && message == "1") {
-        machineRunning = false;
     }
+
+
 }
 
 // Connect to MQTT Broker
@@ -124,7 +125,6 @@ void connectMQTT() {
         if (client.connect("ESP32_Client", MQTT_USERNAME, MQTT_PASSWORD)) {
             Serial.println("Connected!");
             client.subscribe(TOPIC_START);
-            client.subscribe(TOPIC_STOP);
         } else {
             Serial.print("Failed (");
             Serial.print(client.state());
@@ -212,6 +212,7 @@ void updateSensors() {
 
 void runMachine() {
     unsigned long startTime = millis();  // Record start time
+    lcd.clear();
 
 
    //step 1 
@@ -226,14 +227,16 @@ void runMachine() {
     if (flowRate < 2.00 && !heaterRunning && !heaterStoppedByTemp) {
         heaterRunning = true;
         
-        if(heaterRunning) { 
+        if (heaterRunning) { 
            digitalWrite(PUMP_ONE, HIGH); //off the pump one
            digitalWrite(HEATER, LOW);  //turn on the heater
 
         }
+        lcd.clear();
         lcd.setCursor(0, 1);
         lcd.print("Heating oil");
     }
+
 
    //step 3
     if (heaterRunning && currentTemp >= targetTemp) {
@@ -263,7 +266,7 @@ void runMachine() {
 
     if(!solenoidActive && runMotor) { 
        digitalWrite(DCMOTOR, LOW);
-       lcd.setCursor(0, 1)
+       lcd.setCursor(0, 1);
        lcd.print("Mixing oil");
        delay(20000);
        digitalWrite(DCMOTOR, HIGH);
@@ -298,16 +301,20 @@ void runMachine() {
       unsigned long endTime = millis();
       unsigned long producingTime = (endTime - startTime) / 1000;  // Convert to seconds
 
-
-     client.publish("recycoil/producingTime", producingTime);
+      // Convert producingTime (unsigned long) to a string
+     char producingTimeStr[10];  
+     sprintf(producingTimeStr, "%lu", producingTime);
+     client.publish("recycoil/producingTime", producingTimeStr);
      client.publish("recycoil/status", "SUCCESSFUL");
 
      //calculate the saved Co2 
      float carbonfootprint = flowRate * 2.7 * 0.8; //CO₂ Saved = Liters of Biodiesel Produced × CO₂ Emission Factor of Diesel × Emission Reduction Factor
+     // Convert carbonfootprint (float) to a string
+    char carbonfootprintStr[10];  
+    dtostrf(carbonfootprint, 6, 2, carbonfootprintStr);
+    client.publish(TOPIC_CARBONFOOTPRINT, carbonfootprintStr);
 
-     client.publish(TOPIC_CARBONFOOTPRINT, carbonfootprint); //total carbon footprint
      Serial.println("STATUS successful");
-
      Serial.print("Producing Time:");
      Serial.println(producingTime);
 
