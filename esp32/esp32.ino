@@ -309,7 +309,7 @@ void runMachine() {
             step++;
             break;
 
-        case 9:  // Stop extracting after 15 seconds
+        case 10:  // Stop extracting after 15 seconds
             if (millis() - stepStartTime >= 15000) {
                 digitalWrite(SV_BIODIESEL, HIGH);
                 digitalWrite(PUMP_TWO, HIGH);
