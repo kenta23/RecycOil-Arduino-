@@ -5,6 +5,7 @@
 #include <OneWire.h>            
 #include <DallasTemperature.h>  
 #include <HX711_ADC.h>
+#include <BluetoothSerial.h>
 
 #define WIFI_SSID "PLDTHOMEFIBR7Fx93"
 #define WIFI_PASSWORD "@ApolinarioFamily29"
@@ -20,7 +21,7 @@
 #define TOPIC_BIODIESEL "recycoil/biodiesel"
 #define TOPIC_CARBONFOOTPRINT "recycoil/carbonFootprint"
 #define TOPIC_ENERGYCONSUMPTION "recycoil/energyConsumption"
-
+#define TOPIC_DEVICE "recycoil/deviceType" //web or mobile (Android, iOs)
 
 #define PUMP_ONE 23    
 #define PUMP_TWO 19    
@@ -40,6 +41,7 @@
 
 // DS18B20 OneWire
 #define ONE_WIRE_BUS 32  
+
 
 // Flow Sensor Variables
 volatile int pulseCount = 0;
@@ -85,6 +87,7 @@ float currentTemp = 0.0;
 bool runMotor = false;
 bool lastStep = false;
 bool finished = false;
+String macAddress = "";
 
 // WiFi Connection
 void connectWiFi() {
@@ -108,31 +111,84 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print("Message: ");
     Serial.println(message);
 
-    if (String(topic) == TOPIC_START && message == "true") {
-        machineRunning = true;
+    if (macAddress.length() != 0 && String(topic) == TOPIC_DEVICETYPE && message != "web") { 
+        client.subscribe(("recycoil/" + macAddress + "/buttonStart").c_str());
+    } else { 
+        client.subscribe("recycoil/"+WiFi.macAddress()+"/buttonStart").c_str();
     }
 
 
+    if ((String(topic) == TOPIC_START && message == "true") || (String(topic) == "recycoil/" + macAddress + "/buttonStart" && message == "true")) {
+         machineRunning = true;
+     }
+
+
+    // else { 
+    //    client.subscribe("recycoil/"+WiFi.macAddress()+"/buttonStart").c_str();
+    // }
+
 }
 
-// Connect to MQTT Broker
 void connectMQTT() {
-    while (!client.connected()) {
+    int retryCount = 0;
+    const int maxRetries = 5; // Prevents infinite loop
+
+    while (!client.connected() && retryCount < maxRetries) {
         Serial.print("Connecting to MQTT...");
-        if (client.connect("ESP32_Client", MQTT_USERNAME, MQTT_PASSWORD)) {
+        if (client.connect("ESP32_Client")) {
             Serial.println("Connected!");
-            client.subscribe(TOPIC_START);
+
+            if (macAddress.length() != 0) { 
+                client.subscribe(TOPIC_DEVICETYPE);
+                client.subscribe(("recycoil/" + macAddress + "/buttonStart").c_str());
+            } else { 
+                client.subscribe(TOPIC_START);
+            }
+            return;
         } else {
             Serial.print("Failed (");
             Serial.print(client.state());
             Serial.println("), retrying...");
+            retryCount++;
             delay(2000);
         }
     }
+
+    if (retryCount == maxRetries) {
+        Serial.println("MQTT connection failed after multiple attempts.");
+    }
 }
+
+
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+BluetootSerial SerialBT;
+
+
+// Callback function for Bluetooth events
+void btCallback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
+  if (event == ESP_SPP_SRV_OPEN_EVT) { // Triggered when a device connects
+    Serial.print("Connected Device Address: ");
+
+    char formattedMac[18];
+    sprintf(formattedMac, "%02X:%02X:%02X:%02X:%02X:%02X",
+        param->srv_open.rem_bda[0], param->srv_open.rem_bda[1], param->srv_open.rem_bda[2],
+        param->srv_open.rem_bda[3], param->srv_open.rem_bda[4], param->srv_open.rem_bda[5]);
+
+     macAddress = String(formattedMac); // Store formatted MAC address
+
+  }
+}
+
+
 
 void setup() {
     Serial.begin(115200);
+    SerialBT.begin("Recycoil"); //Bluetooth device name
+    SerialBT.register_callback(btCallback); // Register callback function
+    Serial.println("The device started, now you can pair it with bluetooth!");
 
     pinMode(PUMP_ONE, OUTPUT);
     pinMode(PUMP_TWO, OUTPUT);
@@ -179,7 +235,18 @@ void updateSensors() {
         // Read Temperature
         sensors.requestTemperatures();
         currentTemp = sensors.getTempCByIndex(0);
-        client.publish(TOPIC_TEMP, String(currentTemp, 2).c_str());  //publish temp data 
+
+       if (macAddress.length != 0) { 
+          client.publish("recycoil/"+macAddress+"/temperature", String(currentTemp, 2).c_str());  //temp data 
+          client.publish("recycoil/"+macAddress+"/flowRate", String(flowRate, 2).c_str());
+          client.publish(TOPIC_LITERS, String(totalLiters, 2).c_str());
+        }
+       else {
+        client.publish(TOPIC_TEMP, String(currentTemp, 2).c_str());  //temp data 
+        client.publish(TOPIC_FLOW, String(flowRate, 2).c_str());
+        client.publish(TOPIC_LITERS, String(totalLiters, 2).c_str());
+       }
+
         Serial.print("Temperature: ");
         Serial.print(currentTemp);
         Serial.println(" °C");
@@ -192,8 +259,7 @@ void updateSensors() {
 
         flowRate = (pulses / pulsesPerLiter) * 60.0;
         totalLiters += (pulses / pulsesPerLiter);
-        client.publish(TOPIC_FLOW, String(flowRate, 2).c_str());
-        client.publish(TOPIC_LITERS, String(totalLiters, 2).c_str());
+
 
         // Read Load Cell (Weight)
         loadCell.update();
@@ -309,7 +375,7 @@ void runMachine() {
             step++;
             break;
 
-        case 9:  // Stop extracting after 15 seconds
+        case 10:  // Stop extracting after 15 seconds
             if (millis() - stepStartTime >= 15000) {
                 digitalWrite(SV_BIODIESEL, HIGH);
                 digitalWrite(PUMP_TWO, HIGH);
@@ -331,143 +397,42 @@ void runMachine() {
       unsigned long endTime = millis();
       unsigned long producingTime = (endTime - startTime) / 1000;  // Convert to seconds
 
-      // Convert producingTime to a string then publish
-    client.publish("recycoil/producingTime", String(producingTime).c_str());
-
+      //energy consumption
+      float timeHours = producingTime / (1000.0 * 3600.0);     // Convert milliseconds to hours
+      float voltage = 12.0;  // Supply Voltage in Volts
+      float current = 10.0;   // Current in Amps
+      float energyConsumption = voltage * current * timeHours;  // E = V * A * (producingTime / 1000)
      //calculate the saved Co2 
-    float carbonfootprint = weight * 2.7 * 0.8; //CO₂ Saved = Liters of Biodiesel Produced × CO₂ Emission Factor of Diesel × Emission Reduction Factor
-     // Convert carbonfootprint (float) to a string
-    client.publish(TOPIC_CARBONFOOTPRINT, String(carbonfootprintStr, 2).c_str());
+      float carbonfootprint = weight * 2.7 * 0.8; //CO₂ Saved = Liters of Biodiesel Produced × CO₂ Emission Factor of Diesel × Emission Reduction Factor  
+ 
 
-    //energy consumption
-    float timeHours = producingTime / (1000.0 * 3600.0);     // Convert milliseconds to hours
-    float voltage = 12.0;  // Supply Voltage in Volts
-    float current = 10.0;   // Current in Amps
-    float energyConsumption = voltage * current * timeHours;  // E = V * A * (producingTime / 1000)
+    if (macAddress.length() != 0) { 
+     // Convert producingTime to a string then publish
+    client.publish("recycoil/"+macAddress+"/producingTime", String(producingTime).c_str());
+    client.publish("recycoil/"+macAddress+"/carbonFootprint", String(carbonfootprint, 2).c_str());  // Convert carbonfootprint (float) to a string
+    client.publish("recycoil/"+macAddress+"/energyConsumption", String(energyConsumption, 2).c_str());
+    client.publish("recycoil/"+macAddress+"/status", "SUCCESSFUL");    
+   }
+   else { 
+    //if bluetooth not connected 
+     // Convert producingTime to a string then publish
+    client.publish("recycoil/producingTime", String(producingTime).c_str());
+    client.publish(TOPIC_CARBONFOOTPRINT, String(carbonfootprintStr, 2).c_str());  // Convert carbonfootprint (float) to a string
     client.publish(TOPIC_ENERGYCONSUMPTION, String(energyConsumption, 2).c_str());
-
-    Serial.println("STATUS successful");
     client.publish("recycoil/status", "SUCCESSFUL");
+
+    
+   }
+    Serial.println("STATUS successful");
     Serial.print("Producing Time:");
     Serial.println(producingTime);
 
      delay(1000);
      finished = false;
-     }   
+    }   
 
   }
 
-   //step 1 
-    // if (digitalRead(PUMP_ONE) == HIGH) {
-    //     digitalWrite(PUMP_ONE, LOW);
-    //     lcd.setCursor(0, 1);
-    //     lcd.print("Transferring Oil");
-    //     delay(6000);
-    // }
-
-  //step 2
-  //   if (flowRate < 2.00 && !heaterRunning && !heaterStoppedByTemp) {
-  //       heaterRunning = true;
-        
-  //       if (heaterRunning) { 
-  //          digitalWrite(PUMP_ONE, HIGH); //off the pump one
-  //          digitalWrite(HEATER, LOW);  //turn on the heater
-
-  //       }
-  //       lcd.clear();
-  //       lcd.setCursor(0, 1);
-  //       lcd.print("Heating oil");
-  //   }
-
-
-  //  //step 3
-  //   if (heaterRunning && currentTemp >= targetTemp) {
-  //       lcd.clear();
-  //       lcd.setCursor(0, 1);
-  //       lcd.print("Heater Stopped");
-  //       digitalWrite(HEATER, HIGH); //off the heater
-  //       heaterRunning = false;
-  //       heaterStoppedByTemp = true;
-  //       delay(30000); //after 30 seconds
-  //       solenoidActive = true;
-  //   }
-
-  //  //step 4
-  //   if (solenoidActive && heaterStoppedByTemp) {
-  //       lcd.clear();
-  //       lcd.setCursor(0, 1);
-  //       lcd.print("Pouring methanol");
-  //       digitalWrite(SV_METHANOL, LOW); //turn on
-  //       digitalWrite(PUMP_THREE, LOW); //turn on
-
-  //       delay(30000); //after 300000 ms
-  //       digitalWrite(SV_METHANOL, HIGH);
-  //       digitalWrite(PUMP_THREE, HIGH);
-  //       solenoidActive = false;
-  //       delay(10000); //delay 10 seconds for the next step
-  //       runMotor = true;
-  //   }
-
-  //   if(!solenoidActive && runMotor) { 
-  //      digitalWrite(DCMOTOR, LOW);
-  //      lcd.clear();
-  //      lcd.setCursor(0, 1);
-  //      lcd.print("Mixing oil");
-  //      delay(20000);
-
-  //      digitalWrite(DCMOTOR, HIGH);
-  //      lcd.setCursor(0, 1);
-  //      lcd.print("Mixing Done");
-  //      runMotor = false;
-  //      delay(3000);
-  //      lastStep = true;
-  //   }
-  
-     
-  //   if(!runMotor && lastStep) { 
-  //       digitalWrite(SV_BIODIESEL, LOW);
-  //       digitalWrite(PUMP_TWO, LOW);
-  //       delay(15000);
-  //       digitalWrite(SV_BIODIESEL, HIGH);
-  //       digitalWrite(PUMP_TWO, HIGH);
-  //       machineRunning = false;
-  //       finished = true;
-  //   }
-
-  //  if(!machineRunning && finished && lastStep) { 
-  //     //stop all the components
-  //     digitalWrite(PUMP_ONE, HIGH);
-  //     digitalWrite(PUMP_TWO, HIGH);
-  //     digitalWrite(PUMP_THREE, HIGH);
-  //     digitalWrite(HEATER, HIGH);
-  //     digitalWrite(DCMOTOR, HIGH);
-  //     digitalWrite(SV_METHANOL, HIGH);
-  //     digitalWrite(SV_BIODIESEL, HIGH);
-
-  //     unsigned long endTime = millis();
-  //     unsigned long producingTime = (endTime - startTime) / 1000;  // Convert to seconds
-
-  //     // Convert producingTime (unsigned long) to a string
-  //    char producingTimeStr[10];  
-  //    sprintf(producingTimeStr, "%lu", producingTime);
-  //    client.publish("recycoil/producingTime", producingTimeStr);
-  //    client.publish("recycoil/status", "SUCCESSFUL");
-
-  //    //calculate the saved Co2 
-  //    float carbonfootprint = flowRate * 2.7 * 0.8; //CO₂ Saved = Liters of Biodiesel Produced × CO₂ Emission Factor of Diesel × Emission Reduction Factor
-  //    // Convert carbonfootprint (float) to a string
-  //   char carbonfootprintStr[10];  
-  //   dtostrf(carbonfootprint, 6, 2, carbonfootprintStr);
-  //   client.publish(TOPIC_CARBONFOOTPRINT, carbonfootprintStr);
-
-  //    Serial.println("STATUS successful");
-  //    Serial.print("Producing Time:");
-  //    Serial.println(producingTime);
-
-  //    delay(2000);
-  //    lastStep = false;
-  //    finished = false;
-  //  }
 }
 
 bool buttonPressed(int pin) {
@@ -479,8 +444,18 @@ bool buttonPressed(int pin) {
 }
 
 void loop() {
-    client.loop();
-    updateSensors();
+  client.loop();
+  updateSensors();
+
+  if (Serial.available()) {
+      SerialBT.write(Serial.read());
+  }
+
+  if (SerialBT.available()) {
+     Serial.write(SerialBT.read());
+  }
+
+  delay(100);
 
     if (buttonPressed(BUTTON_ONE)) {
         machineRunning = true;
