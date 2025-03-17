@@ -6,6 +6,9 @@
 #include <DallasTemperature.h>  
 #include <HX711_ADC.h>
 #include <BluetoothSerial.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
 
 #define WIFI_SSID "PLDTHOMEFIBR7Fx93"
 #define WIFI_PASSWORD "@ApolinarioFamily29"
@@ -21,6 +24,7 @@
 #define TOPIC_BIODIESEL "recycoil/biodiesel"
 #define TOPIC_CARBONFOOTPRINT "recycoil/carbonFootprint"
 #define TOPIC_ENERGYCONSUMPTION "recycoil/energyConsumption"
+#define TOPIC_PRODUCINGTIME = "recycoi/producingTime"
 #define TOPIC_DEVICE "recycoil/deviceType" //web or mobile (Android, iOs)
 
 #define PUMP_ONE 23    
@@ -41,6 +45,10 @@
 
 // DS18B20 OneWire
 #define ONE_WIRE_BUS 32  
+
+//bluetooth
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 
 // Flow Sensor Variables
@@ -89,6 +97,9 @@ bool lastStep = false;
 bool finished = false;
 String macAddress = "";
 
+
+
+
 // WiFi Connection
 void connectWiFi() {
     Serial.print("Connecting to WiFi...");
@@ -111,15 +122,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print("Message: ");
     Serial.println(message);
 
-    if (macAddress.length() != 0 && String(topic) == TOPIC_DEVICETYPE && message != "web") { 
-        client.subscribe(("recycoil/" + macAddress + "/buttonStart").c_str());
-    } else { 
-        client.subscribe("recycoil/"+WiFi.macAddress()+"/buttonStart").c_str();
-    }
+    // if (macAddress.length() != 0 && String(topic) == TOPIC_DEVICETYPE && message != "web") { 
+    //     client.subscribe(("recycoil/" + macAddress + "/buttonStart").c_str());
+    // } else { 
+    //     client.subscribe("recycoil/"+WiFi.macAddress()+"/buttonStart").c_str();
+    // }
 
 
-    if ((String(topic) == TOPIC_START && message == "true") || (String(topic) == "recycoil/" + macAddress + "/buttonStart" && message == "true")) {
-         machineRunning = true;
+    // if ((String(topic) == TOPIC_START && message == "true") || (String(topic) == "recycoil/" + macAddress + "/buttonStart" && message == "true")) {
+    //      machineRunning = true;
+    //  }
+
+    if (String(topic) == TOPIC_START && message == "true") { 
+       machineRunning = true;
      }
 
 
@@ -159,36 +174,31 @@ void connectMQTT() {
     }
 }
 
-
-#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
-#endif
-
-BluetootSerial SerialBT;
-
-
-// Callback function for Bluetooth events
-void btCallback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
-  if (event == ESP_SPP_SRV_OPEN_EVT) { // Triggered when a device connects
-    Serial.print("Connected Device Address: ");
-
-    char formattedMac[18];
-    sprintf(formattedMac, "%02X:%02X:%02X:%02X:%02X:%02X",
-        param->srv_open.rem_bda[0], param->srv_open.rem_bda[1], param->srv_open.rem_bda[2],
-        param->srv_open.rem_bda[3], param->srv_open.rem_bda[4], param->srv_open.rem_bda[5]);
-
-     macAddress = String(formattedMac); // Store formatted MAC address
-
-  }
-}
-
-
-
 void setup() {
     Serial.begin(115200);
-    SerialBT.begin("Recycoil"); //Bluetooth device name
-    SerialBT.register_callback(btCallback); // Register callback function
     Serial.println("The device started, now you can pair it with bluetooth!");
+
+    //bluetooth BLE
+    BLEDevice::init("ESP32");
+    BLEServer *pServer = BLEDevice::createServer();
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                     CHARACTERISTIC_UUID,
+                                     BLECharacteristic::PROPERTY_READ |
+                                     BLECharacteristic::PROPERTY_WRITE
+                                     );
+    pCharacteristic->setValue("Hello World says Neil");
+    BLEAdvertising *pAdvertising = pServer->getAdvertising();
+    pAdvertising->start();
+
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);  // Helps with connecting
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+
+
 
     pinMode(PUMP_ONE, OUTPUT);
     pinMode(PUMP_TWO, OUTPUT);
@@ -416,13 +426,12 @@ void runMachine() {
    else { 
     //if bluetooth not connected 
      // Convert producingTime to a string then publish
-    client.publish("recycoil/producingTime", String(producingTime).c_str());
+    client.publish(TOPIC_PRODUCINGTIME, String(producingTime).c_str());
     client.publish(TOPIC_CARBONFOOTPRINT, String(carbonfootprintStr, 2).c_str());  // Convert carbonfootprint (float) to a string
     client.publish(TOPIC_ENERGYCONSUMPTION, String(energyConsumption, 2).c_str());
     client.publish("recycoil/status", "SUCCESSFUL");
-
-    
    }
+   
     Serial.println("STATUS successful");
     Serial.print("Producing Time:");
     Serial.println(producingTime);
@@ -446,16 +455,6 @@ bool buttonPressed(int pin) {
 void loop() {
   client.loop();
   updateSensors();
-
-  if (Serial.available()) {
-      SerialBT.write(Serial.read());
-  }
-
-  if (SerialBT.available()) {
-     Serial.write(SerialBT.read());
-  }
-
-  delay(100);
 
     if (buttonPressed(BUTTON_ONE)) {
         machineRunning = true;
